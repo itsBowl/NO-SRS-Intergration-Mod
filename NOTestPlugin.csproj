@@ -1,0 +1,109 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>NO_SRS</AssemblyName>
+    <Product>Nuclear Option SRS Intergration</Product>
+    <Version>1.0.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <RestoreAdditionalProjectSources>
+      https://api.nuget.org/v3/index.json;
+      https://nuget.bepinex.dev/v3/index.json;
+      https://nuget.samboy.dev/v3/index.json
+    </RestoreAdditionalProjectSources>
+    <RootNamespace>NO_SRS</RootNamespace>
+  </PropertyGroup>
+
+    <!-- Debug configuration -->
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+  </PropertyGroup>
+
+  <!-- Release configuration -->
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugType>portable</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <Optimize>true</Optimize>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <PathMap>$(MSBuildProjectDirectory)=.</PathMap>
+    <EmbedAllSources>false</EmbedAllSources>
+    <EmbedUntrackedSources>false</EmbedUntrackedSources>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <Deterministic>true</Deterministic>
+    <OutputPath>bin\Release\</OutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BepInEx.Analyzers" Version="1.*" PrivateAssets="all" />
+    <PackageReference Include="BepInEx.Core" Version="5.*" />
+    <PackageReference Include="BepInEx.PluginInfoProps" Version="2.*" />
+    <PackageReference Include="HarmonyX" Version="2.16.1" />
+     <PackageReference Include="MonoMod.Backports" Version="2.0.0-prerelease.5">
+      <Private>True</Private>
+    </PackageReference>
+    <PackageReference Include="MonoMod.ILHelpers" Version="1.1.0">
+      <Private>True</Private>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Diagnostics.Runtime" Version="3.1.512801" />
+    <PackageReference Include="UnityEngine.Modules" Version="2022.3.62" IncludeAssets="compile" />
+  </ItemGroup>
+
+
+
+  <PropertyGroup>
+    <GameDirectory Condition="'$(GameDirectory)' == ''">I:\Steam\steamapps\common\Nuclear Option</GameDirectory>
+    <GameManagedPath>$(GameDirectory)\NuclearOption_Data\Managed</GameManagedPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Game DLLs - Update GameDirectory property above or copy DLLs to Libs folder -->
+    <Reference Include="UnityEngine">
+      <HintPath>$(GameManagedPath)\UnityEngine.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(GameManagedPath)\Assembly-CSharp.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(GameManagedPath)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(GameManagedPath)\UnityEngine.UI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(GameManagedPath)\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(GameManagedPath)\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(GameManagedPath)\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(GameManagedPath)\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Mirage">
+      <HintPath>$(GameManagedPath)\Mirage.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+
+  
+  <ItemGroup Condition="'$(TargetFramework.TrimEnd(`0123456789`))' == 'net'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.2" PrivateAssets="all" />
+  </ItemGroup>
+</Project>
