@@ -15,7 +15,7 @@ public class Plugin : BaseUnityPlugin
 {
     internal new static ManualLogSource Logger;
 
-	public static Harmony harmony;
+	private static Harmony harmony;
 	public static ConfigEntry<bool> enablePlugin;
 	public static ConfigEntry<int> width;
 	
@@ -32,17 +32,18 @@ public class Plugin : BaseUnityPlugin
 		{
 			Plugin.Logger.LogError("[NO SRS] SRSRadioReader didn't find SRS");
 		}
+		
+		try
 		{
-			try
-			{
-				harmony.PatchAll(typeof(SRSComponent.OnPlatformStart));
-				harmony.PatchAll(typeof(SRSComponent.OnPlatformUpdate));
-			}
-			catch (Exception ex)
-			{
-				Logger.LogError($"[NO_SRS] Patch failed: {ex.Message}\n{ex.StackTrace}");
-			}
+			Logger.LogInfo("[NO SRS] Patching functions");
+			harmony.PatchAll(typeof(SRSComponent.OnPlatformStart));
+			harmony.PatchAll(typeof(SRSComponent.OnPlatformUpdate));
 		}
+		catch (Exception ex)
+		{
+			Logger.LogError($"[NO_SRS] Patch failed: {ex.Message}\n{ex.StackTrace}");
+		}
+		
 	}
 
 	private void OnDestroy()

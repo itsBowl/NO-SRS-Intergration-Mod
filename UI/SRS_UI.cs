@@ -42,22 +42,38 @@ namespace NO_SRS.UI
         void updateSrsData()
         {
             var radio = SRSRadioReader.instance?.readState();
-            if (radio == null)
+            if (radio == null || radio.freq == 0)
             {
                 srsData.channel = "RADIO NOT FOUND";
                 srsData.transmitting = false;
                 srsData.activeVoice = "—";
                 return;
             }
-
+            string channelName = getPresetName(radio.freq);
             srsData.channel = radio.isIntercom || radio.isDisabled
                 ? "No active radio"
-                : $"Radio {radio.selected}: {radio.freqMhz} MHz {radio.modName}" +
+                : $"R{radio.selected} {channelName} : {radio.freqMhz} MHz {radio.modName}" +
                   (radio.channel >= 0 ? $" Ch{radio.channel}" : "");
             srsData.transmitting = radio.isSending;
             srsData.reciving = radio.isReceiving;
             srsData.activeVoice = radio.currentSpeaker;
 
+        }
+
+        private string getPresetName(double freq, double tol = 10000)
+        {
+            foreach (var k in SRSRadioReader.instance.serverPresetChannels)
+            {
+                foreach (var p in k.Value)
+                {
+                    if (Math.Abs(freq - p.freq) < tol)
+                    {
+                        return p.name.Trim();
+                    }
+                }
+            }
+
+            return "--";
         }
 
         void OnGUI()
