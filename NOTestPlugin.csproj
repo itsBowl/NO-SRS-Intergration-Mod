@@ -36,7 +36,7 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <Nullable>disable</Nullable>              
     <TieredCompilation>false</TieredCompilation>
-    <FodyWeavers>FodyWeavers.Release.xml</FodyWeavers>
+    <FodyWeavers>FodyWeavers.xml</FodyWeavers>
   </PropertyGroup>
   
   
