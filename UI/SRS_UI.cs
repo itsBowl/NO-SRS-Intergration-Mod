@@ -60,13 +60,14 @@ namespace NO_SRS.UI
 
         }
 
-        private string getPresetName(double freq, double tol = 10000)
+        private string getPresetName(double freq, double tol = 1000)
         {
             foreach (var k in SRSRadioReader.instance.serverPresetChannels)
             {
                 foreach (var p in k.Value)
                 {
-                    if (Math.Abs(freq - p.freq) < tol)
+                    var pFreq = p.freq * 1_000_000.0;
+                    if (Math.Abs(freq - pFreq) < tol)
                     {
                         return p.name.Trim();
                     }
@@ -99,7 +100,7 @@ namespace NO_SRS.UI
             try
             {
                 windowRect = GUILayout.Window(
-                    12345,
+                    0xEBFE,
                     windowRect,
                     DrawWindow,
                     "SRS",

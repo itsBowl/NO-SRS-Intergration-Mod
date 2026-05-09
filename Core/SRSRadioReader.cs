@@ -435,18 +435,15 @@ namespace NO_SRS.Data
                         ulong channelBase = channelPtr + OBJ_HEADER;
                         
                         ulong freqAddress    = channelBase + SERVER_PRESET_CHANNEL_FREQ_OFFSET;
-                        double presetFrequency       = readF64(freqAddress);
-                        presetFrequency *= 1_000_000.0;
+                        double presetFrequency = readF64(freqAddress);
                         ulong namePtr  = readPtr(channelBase + SERVER_PRESET_CHANNEL_NAME_OFFSET);
                         string name    = readStr(namePtr, out _);
                         log.LogInfo($"[SRS] channelPtr: 0x{channelPtr:X}, channelBase: 0x{channelBase:X}, freqAddr: 0x{freqAddress:X}, freq: {presetFrequency}, namePtr: 0x{namePtr}, name:  {name}");
                         if (name != null)
                             channels.Add((name, presetFrequency));
                     }
-                    if (channels.Count > 0)
-                        res[key] = channels;
+                    if (channels.Count > 0) res[key] = channels;
                 }
-                
             }
             catch (Exception e)
             {
@@ -457,7 +454,7 @@ namespace NO_SRS.Data
             {
                 log.LogInfo($"[SRS] Radio: {e.Key}");
                 foreach (var (name, freq) in e.Value)
-                    log.LogInfo($"[SRS]   {name}: {freq / 1_000_000.0:F3} MHz");
+                    log.LogInfo($"[SRS]   {name}: {freq:F3} MHz");
             }
             return res;
         }
