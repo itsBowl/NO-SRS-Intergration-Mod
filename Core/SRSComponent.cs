@@ -18,7 +18,7 @@ public static class SRSComponent
         public static void Postfix()
         {
             //if (init || !Plugin.enablePlugin.Value) return;
-            Plugin.Logger.LogInfo("[SRS] Initialising window");
+            Plugin.Logger.LogInfo("Initialising window");
 
             try
             {
@@ -26,11 +26,11 @@ public static class SRSComponent
                 srsWindow = window.AddComponent<SRSWindow>();
                 UnityEngine.Object.DontDestroyOnLoad(window);
                 init = true;
-                Plugin.Logger.LogInfo("[SRS] Window initialized");
+                Plugin.Logger.LogInfo("Window initialized");
             }
             catch (Exception e)
             {
-                Plugin.Logger.LogWarning($"[SRS] Error initialising windows: {e.Message}\n{e.StackTrace}");
+                Plugin.Logger.LogWarning($"Error initialising windows: {e.Message}\n{e.StackTrace}");
             }
         }
     }
@@ -46,7 +46,7 @@ public static class SRSComponent
             {
                 if (!SRSRadioReader.instance.findInstance())
                 {
-                    Plugin.Logger.LogError($"[SRS] Could not find SRS instance");
+                    Plugin.Logger.LogError($"Could not find SRS instance");
                 }
                 return;
             }
@@ -57,7 +57,7 @@ public static class SRSComponent
             }
             catch (Exception e)
             {
-                Plugin.Logger.LogWarning($"[SRS] Error updating windows: {e.Message}\n{e.StackTrace}");
+                Plugin.Logger.LogWarning($"Error updating windows: {e.Message}\n{e.StackTrace}");
             }
         }
     }

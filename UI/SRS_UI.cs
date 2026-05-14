@@ -1,11 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Reflection;
-using HarmonyLib;
 using NO_SRS.Data;
 using UnityEngine;
-using Logger = BepInEx.Logging.Logger;
 
 namespace NO_SRS.UI
 {
@@ -19,19 +14,25 @@ namespace NO_SRS.UI
         private GUIStyle redBoxStyle;
         private GUIStyle greenBoxStyle;
         private GUIStyle blueBoxStyle;
-        private float timeSinceCheck = 0;
+        private float srsCheckRunningTimer = 0;
+        private float srsServerPresetsCheckTimer = 0;
         
 
         public void Update()
         {
             if (!SRSRadioReader.instance.initialised)
             {
-                timeSinceCheck +=  Time.deltaTime;
+                srsCheckRunningTimer +=  Time.deltaTime;
             }
 
-            if (timeSinceCheck > 2.5f)
+            if (!SRSRadioReader.instance.hasSetServerSettings)
             {
-                timeSinceCheck = 0;
+                srsServerPresetsCheckTimer +=  Time.deltaTime;
+            }
+
+            if (srsCheckRunningTimer > 2.5f)
+            {
+                srsCheckRunningTimer = 0;
                 SRSRadioReader.instance.findInstance();
             }
             
@@ -83,6 +84,8 @@ namespace NO_SRS.UI
             {
                 return;
             }
+
+            GUI.color = new Color(1f, 1f, 1f, 0.95f);
             
             if (windowRect.x < 0 || windowRect.y < 0 || 
                 windowRect.x > Screen.width - windowRect.width || 

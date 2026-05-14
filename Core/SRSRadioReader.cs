@@ -5,8 +5,6 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using BepInEx.Logging;
 using Microsoft.Diagnostics.Runtime;
-using Debug = UnityEngine.Debug;
-
 
 namespace NO_SRS.Data
 {
@@ -38,6 +36,7 @@ namespace NO_SRS.Data
     {
         public static SRSRadioReader instance { get; private set; }
         public bool initialised { get; private set; } = false;
+        public bool hasSetServerSettings { get; private set; } = false;
         public Dictionary<string, List<(string name, double freq)>> serverPresetChannels;
 
         //List of offsets discovered using ClrMD
@@ -129,8 +128,14 @@ namespace NO_SRS.Data
 
         public void shutdown()
         {
-            if (procHandle != IntPtr.Zero) CloseHandle(procHandle);
+            log.LogInfo("Shutting down");
+            if (procHandle != IntPtr.Zero)
+            {
+                CloseHandle(procHandle);
+                procHandle = IntPtr.Zero;
+            }
             initialised = false;
+            hasSetServerSettings = false;
         }
 
         private SRSRadioReader(ManualLogSource logger)
@@ -142,18 +147,27 @@ namespace NO_SRS.Data
         {
             try
             {
-                log.LogInfo("[NO SRS] Finding instance");
+                log.LogInfo("Finding instance");
+                var procs = Process.GetProcessesByName("SR-ClientRadio");
+                if (procs.Length == 0)
+                {
+                    log.LogError("No processes found");
+                }
+                foreach (var p in procs)
+                {
+                    log.LogInfo($"Process: {p.ProcessName}");
+                }
                 var proc = Process.GetProcessesByName("SR-ClientRadio").FirstOrDefault();
                 if (proc == null)
                 {
-                    log.LogWarning("[NO_SRS] Failed to find SRS process, is it running?");
+                    log.LogWarning("Failed to find SRS process, is it running?");
                     return false;
                 }
 
                 procHandle = OpenProcess(PROCESS_VM_READ, false, proc.Id);
                 if (procHandle == IntPtr.Zero)
                 {
-                    log.LogWarning("[NO_SRS] Failed to capture process");
+                    log.LogWarning("Failed to capture process");
                     return false;
                 }
 
@@ -162,29 +176,24 @@ namespace NO_SRS.Data
 
                 var heap = runtime.Heap;
                 
-                // Loop over all objects in the heap and look for the client state singleton
+                // Loop over all objects in the heap and look for the classes we want
                 foreach (var obj in heap.EnumerateObjects())
                 {
-                    if (obj.Type?.Name != "Ciribob.DCS.SimpleRadio.Standalone.Client.Singletons.ClientStateSingleton")
-                        continue;
+                    if (obj.Type?.Name == "Ciribob.DCS.SimpleRadio.Standalone.Client.Singletons.ClientStateSingleton")
+                    {
+                        clientStateInstanceAddress = obj.Address;
+                        log.LogInfo($"ClientStateSingleton found at 0x{clientStateInstanceAddress:X}");
+                        initialised = true;
+                    }
+                    if (obj.Type?.Name == "Ciribob.DCS.SimpleRadio.Standalone.Common.Network.Singletons.SyncedServerSettings")
+                    {
+                        serverSyncedSettingsAddress = obj.Address;
+                        log.LogInfo($"SyncedServerSettings found at 0x{serverSyncedSettingsAddress:X}");
+                    }
 
-                    clientStateInstanceAddress = obj.Address;
-                    log.LogInfo($"[SRS] ClientStateSingleton found at 0x{clientStateInstanceAddress:X}");
-                    initialised = true;
+                    if (serverSyncedSettingsAddress != 0 && clientStateInstanceAddress != 0)
+                        break;
                 }
-                
-                foreach (var obj in heap.EnumerateObjects())
-                {
-                    if (obj.Type?.Name != "Ciribob.DCS.SimpleRadio.Standalone.Common.Network.Singletons.SyncedServerSettings")
-                        continue;
-
-                    serverSyncedSettingsAddress = obj.Address;
-                    log.LogInfo($"[SRS] SyncedServerSettings found at 0x{serverSyncedSettingsAddress:X}");
-                    break;
-                }
-                
-                
-
                 if (serverSyncedSettingsAddress != 0 && clientStateInstanceAddress != 0)
                 {
                     serverPresetChannels = readServerPresetRadios();
@@ -192,14 +201,16 @@ namespace NO_SRS.Data
                 }
                 if (serverSyncedSettingsAddress == 0)
                 {
-                    log.LogError("[SRS] Failed to find the synced server settings");
+                    log.LogError("Failed to find the synced server settings");
+                    return true;
                 }
-                log.LogWarning("[NO SRS] Failed to find singleton type");
+                
+                log.LogWarning("Failed to find singleton type");
                 return false;
             }
             catch (Exception ex)
             {
-                log.LogError($"[NO SRS] find instance error: {ex.Message}");
+                log.LogError($"find instance error: {ex.Message}");
                 return false;
             }
         }
@@ -214,23 +225,22 @@ namespace NO_SRS.Data
             
             if (!initialised)
             {
-                if (!hasDumped) log.LogWarning("[NO SRS] Reader not initialised");
+                if (!hasDumped) log.LogWarning("Reader not initialised");
                 hasDumped = true;
                 return null;
             }
             if (procHandle == IntPtr.Zero)
             {
-                if (!hasDumped) log.LogWarning("[NO SRS] Process handle not found/is zero");
+                if (!hasDumped) log.LogWarning("Process handle not found/is zero");
                 hasDumped = true;
                 return null;
             }
             if (!readBool(clientStateInstanceAddress + OBJ_HEADER + SRS_IS_CONNECTED_OFFSET))
             {
-                if (!hasDumped) log.LogWarning("[NO SRS] SRS is not connected");
-                CloseHandle(procHandle);
-                initialised = false;
+                if (!hasDumped) log.LogWarning("SRS is not connected");
+                shutdown();
                 serverPresetChannels = null;
-                if (!hasDumped) log.LogWarning("[NO SRS] Dumping handle, attempting to reinitialise process");
+                if (!hasDumped) log.LogWarning("Dumping handle, attempting to reinitialise process");
                 hasDumped = true;
                 return null;
             }
@@ -238,7 +248,7 @@ namespace NO_SRS.Data
             //checking the error field
             if (readBool(clientStateInstanceAddress + OBJ_HEADER + SRS_IS_CONNECTED_OFFSET + 1))
             {
-                if (!hasDumped) log.LogError($"[NO SRS] SRS connection error");
+                if (!hasDumped) log.LogError($"SRS connection error");
                 hasDumped = true;
             }
 
@@ -256,7 +266,7 @@ namespace NO_SRS.Data
                 ulong dscRadioArrayPtr = readPtr(playerRadioInfoBase + DSC_RADIO_ARRAY_OFFSET);    //Pointer to DSCRadio array
                 if (dscRadioArrayPtr == 0)
                 {
-                    log.LogError($"[NO SRS] Could not read radio array pointer, {baseAddr}->{playerRadioInfoPtr} + {DSC_RADIO_ARRAY_OFFSET}->{dscRadioArrayPtr}");
+                    log.LogError($"Could not read radio array pointer, {baseAddr}->{playerRadioInfoPtr} + {DSC_RADIO_ARRAY_OFFSET}->{dscRadioArrayPtr}");
                     return null;
                 }
                 
@@ -270,7 +280,7 @@ namespace NO_SRS.Data
                 
                 if (currentRadioPtr == 0)
                 {
-                    log.LogError($"[NO SRS] Could not read radio element pointer");
+                    log.LogError($"Could not read radio element pointer");
                     return null;
                 }
                 ulong currentRadioBase = currentRadioPtr + OBJ_HEADER;
@@ -322,7 +332,7 @@ namespace NO_SRS.Data
                 }
                 else
                 {
-                    log.LogError($"[NO SRS] Could not read recieving array pointer");
+                    log.LogError($"Could not read recieving array pointer");
                 }
 
                 if (!isReceiving)
@@ -351,7 +361,7 @@ namespace NO_SRS.Data
             }
             catch (Exception ex)
             {
-                log.LogError($"[NO SRS] readState failure: {ex.Message}");
+                log.LogError($"readState failure: {ex.Message}");
                 initialised = false;
                 return null;
             }
@@ -359,28 +369,34 @@ namespace NO_SRS.Data
         
         public void diagnoseArrayLayout(ulong radiosArrayPtr)
         {
-            log.LogInfo($"[SRS] radiosArrayPtr: 0x{radiosArrayPtr:X}");
+            log.LogInfo($"radiosArrayPtr: 0x{radiosArrayPtr:X}");
             
             var buf = new byte[128];
             ReadProcessMemory(procHandle, (IntPtr)radiosArrayPtr, buf, 128, out int read);
     
-            log.LogInfo($"[SRS] Bytes read: {read}");
+            log.LogInfo($"Bytes read: {read}");
             
             for (int i = 0; i < 128; i += 8)
             {
                 var hex = BitConverter.ToString(buf, i, 8).Replace("-", " ");
                 var asLong = BitConverter.ToUInt64(buf, i);
-                log.LogInfo($"[SRS] +{i:D3}: {hex}  (0x{asLong:X})");
+                log.LogInfo($"+{i:D3}: {hex}  (0x{asLong:X})");
             }
         }
 
-        private Dictionary<string, List<(string name, double freq)>> readServerPresetRadios()
+        public Dictionary<string, List<(string name, double freq)>> readServerPresetRadios()
         {
             var res =  new Dictionary<string, List<(string name, double freq)>>();
             if (!initialised || serverSyncedSettingsAddress == 0)
             {
-                log.LogError($"[NO SRS] Reader not initialised or server sync settings not found!");
+                log.LogError($"Reader not initialised or server sync settings not found!");
                 return res;
+            }
+
+            if (serverPresetChannels != null)
+            {
+                log.LogInfo($"Server presets generated!");
+                return serverPresetChannels;
             }
 
             try
@@ -390,7 +406,7 @@ namespace NO_SRS.Data
                 ulong dictPtr = readPtr(settingsBase + SERVER_SYNCED_SETTINGS_PRESET_CHANNELS_OFFSET);
                 if (dictPtr == 0)
                 {
-                    log.LogError($"[NO SRS] could not read server preset dictionary pointer");
+                    log.LogError($"Could not read server preset dictionary pointer");
                     return res;
                 }
                 
@@ -400,7 +416,7 @@ namespace NO_SRS.Data
                 ulong entriesPtr = readPtr(dictBase + DICT_ENTRIES_OFFSET);
                 if (entriesPtr == 0 || count <= 0)
                 {
-                    log.LogWarning($"[NO SRS] Could not read server preset dictionary pointer/Count is {count}");
+                    log.LogWarning($"Could not read server preset dictionary pointer/Count is {count}");
                     return res;
                 }
                 //Struct Layout: [OBJ_HEADER][methodTable][len:4][_:4][entries...]
@@ -438,23 +454,24 @@ namespace NO_SRS.Data
                         double presetFrequency = readF64(freqAddress);
                         ulong namePtr  = readPtr(channelBase + SERVER_PRESET_CHANNEL_NAME_OFFSET);
                         string name    = readStr(namePtr, out _);
-                        log.LogInfo($"[SRS] channelPtr: 0x{channelPtr:X}, channelBase: 0x{channelBase:X}, freqAddr: 0x{freqAddress:X}, freq: {presetFrequency}, namePtr: 0x{namePtr}, name:  {name}");
+                        //log.LogInfo($"channelPtr: 0x{channelPtr:X}, channelBase: 0x{channelBase:X}, freqAddr: 0x{freqAddress:X}, freq: {presetFrequency}, namePtr: 0x{namePtr}, name:  {name}");
                         if (name != null)
                             channels.Add((name, presetFrequency));
                     }
                     if (channels.Count > 0) res[key] = channels;
+                    hasSetServerSettings = true;
                 }
             }
             catch (Exception e)
             {
-                log.LogError($"[NO SRS] Exception Reading Preset Channels: {e.Message}");
+                log.LogError($"Exception Reading Preset Channels: {e.Message}");
             }
-            log.LogInfo($"[NO SRS] preset channels size: {res.Count}");
+            log.LogInfo($"preset channels size: {res.Count}");
             foreach (var e in res)
             {
-                log.LogInfo($"[SRS] Radio: {e.Key}");
+                log.LogInfo($"Radio: {e.Key}");
                 foreach (var (name, freq) in e.Value)
-                    log.LogInfo($"[SRS]   {name}: {freq:F3} MHz");
+                    log.LogInfo($"   {name}: {freq:F3} MHz");
             }
             return res;
         }

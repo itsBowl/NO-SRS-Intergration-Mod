@@ -46,9 +46,6 @@
     <PackageReference Include="BepInEx.Core" Version="5.*" />
     <PackageReference Include="BepInEx.PluginInfoProps" Version="2.*" />
     <PackageReference Include="HarmonyX" Version="2.16.1" />
-     <PackageReference Include="MonoMod.Backports" Version="2.0.0-prerelease.5">
-      <Private>True</Private>
-    </PackageReference>
     <PackageReference Include="MonoMod.ILHelpers" Version="1.1.0">
       <Private>True</Private>
     </PackageReference>
@@ -101,6 +98,10 @@
     </Reference>
     <Reference Include="Mirage">
       <HintPath>$(GameManagedPath)\Mirage.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(GameManagedPath)\Unity.TextMeshPro.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>
