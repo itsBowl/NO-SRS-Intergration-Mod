@@ -3,482 +3,485 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using BepInEx.Logging;
 using Microsoft.Diagnostics.Runtime;
 
-namespace NO_SRS.Data
+
+
+namespace NO_SRS.Core;
+
+public class SRSRadioReader
 {
-    public class SRSRadio
+    public static SRSRadioReader instance { get; private set; }
+    public bool initialised { get; set; }
+    
+    private readonly ManualLogSource log;
+    private IntPtr procHandle = IntPtr.Zero;
+    private float RADIO_RECEIVING_TIMEOUT = 300.0f;
+
+    public Dictionary<string, List<(string name, double freq)>> serverPresetChannels;
+    
+
+    private Task receivingStateTask = null;
+    
+    #region SRS_MEMORY_STUFF
+    //addresses
+    private ulong clientStateInstanceAddr;
+    private ulong syncedSettingAddress;
+    //state offsets
+    private ulong connectedOffset;
+    private ulong radioInfoOffset;
+    private ulong sendingStateOffset;
+    private ulong receivingStateOffset;
+    //radio offsets
+    private ulong radioArrayOffset;
+    private ulong selectedRadioOffset;
+    private ulong radioFrequencyOffset;
+    private ulong radioChannelOffset;
+    private ulong radioModOffset;
+    private ulong radioReceivingSentByOffset;
+    private ulong radioLastReceivedOffset;
+    //transmission offsets
+    private ulong sendingOffset;
+    private ulong sendingOnOffset;
+    //setting and names offsets
+    private ulong serverSyncedSettingsOffset;
+    private ulong presetChannelNamesOffset;
+    private ulong serverPresetChannelNamesOffset;
+    private ulong serverPresetFrequencysOffset;
+    #endregion
+    
+    #region CLR_OFFSETS
+    private const ulong HEADER_OFFSET = 8;
+    private const ulong ARRAY_LENGTH_OFFSET = 8;
+    private const ulong ARRAY_ELEMENTS_OFFSET = 16;
+    private const ulong STRING_OFFSET = 4;
+    private const ulong ENTRY_STRIDE = 24;
+    private const ulong ENTRY_KEY_OFFSET = 0;
+    private const ulong ENTRY_VALUE_OFFSET = 8;
+    private const ulong ENTRY_NEXT_OFFSET = 20;
+    private const ulong LIST_ITEMS_OFFSET = 0;
+    private const ulong LIST_SIZE_OFFSET = 8;
+    private const ulong DICT_COUNT_OFFSET = 48;
+    private const ulong DICT_ENTRIES_OFFSET = 8;
+    #endregion
+    
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool ReadProcessMemory(IntPtr proc, IntPtr addr, byte[] buffer, int size, out int read);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr hObject);
+        
+    private const uint PROCESS_VM_READ = 0x0010;
+
+    public static void init(ManualLogSource logger)
     {
-        public double freq = 0;
-        public int mod = 0;
-        public int channel = 0;
-        public bool isSending = false;
-        public int sendingOn = 0;
-        public int selected = 0;
-        public string currentSpeaker = "";
-        public bool isReceiving = false;
-
-        public string freqMhz => Math.Round(freq / 1000000.0, 3).ToString("F3");
-        public string modName => mod switch
-        {
-            0 => "AM", 
-            1 => "FM", 
-            2 => "ICM", 
-            _ => "-"
-        };
-
-        public bool isDisabled => mod == 3;
-        public bool isIntercom => mod == 2;
+        if (instance == null) instance = new SRSRadioReader(logger);
+        logger.LogInfo("Initializing SRS Radio Reader");
+        
     }
 
-    public class SRSRadioReader
+    private SRSRadioReader(ManualLogSource logger)
     {
-        public static SRSRadioReader instance { get; private set; }
-        public bool initialised { get; private set; } = false;
-        public bool hasSetServerSettings { get; private set; } = false;
-        public Dictionary<string, List<(string name, double freq)>> serverPresetChannels;
-
-        //List of offsets discovered using ClrMD
-        //if the plugin breaks this is the FIRST place to check
-        private const ulong SRS_IS_CONNECTED_OFFSET = 116;
-        private const ulong DSC_PLAYER_RADIO_INFO_OFFSET = 16;
-        private const ulong RADIO_SENDING_STATE_OFFSET = 40;
-        private const ulong RADIO_RECEIVING_STATE_OFFSET = 48;
-
-        private const ulong DSC_RADIO_ARRAY_OFFSET = 32;
-        private const ulong SELECTED_RADIO_OFFSET = 72;
-
-        private const ulong RADIO_FREQUENCY_OFFSET = 16;
-        private const ulong RADIO_CHANNEL_OFFSET = 48;
-        private const ulong RADIO_MOD_OFFSET = 64;
-
-        private const ulong SENDING_ON_OFFSET = 8;
-        private const ulong SENDING_OFFSET = 16;
-
-        private const ulong RADIO_RECEIVING_SENT_BY_OFFSET = 0;
-        private const ulong RADIO_LAST_RECEIVED_OFFSET = 8;
-        //private const ulong RECEIVING_RECEIVED_ON_OFFSET   = 16;
-        //private const ulong RECEIVING_IS_SECONDARY_OFFSET  = 20;
+        log = logger;
+    }
+    public bool findInstance()
+    {
         
-        private const long RADIO_RECEIVING_TIMEOUT_MS = 350;
-        
-        private const ulong STRING_OFFSET = 4; //C# strings are stored as [i32: len, data]
-        
-        //ClrMD reads offsets from the start of the fields, not from the start of the object
-        //This starts at objectAddr + 8, so we add that using OBJ_HEADER
-        //magic numbers bad
-        private const ulong OBJ_HEADER = 8;
-        
-        //This is for reading stuff stored in memory sent from the server once (our server settings)
-        private const ulong SERVER_SYNCED_SETTINGS_PRESET_CHANNELS_OFFSET = 32;
-        
-        //Dictionary offsets
-        private const ulong DICT_ENTRIES_OFFSET = 8;
-        private const ulong DICT_COUNT_OFFSET = 48;
-        
-        //Dict Entry struct offsets (note: do not use OBJ_HEADER as they are inline)
-        private const ulong ENTRY_KEY_OFFSET = 0;
-        private const ulong ENTRY_VALUE_OFFSET = 8;
-        private const ulong ENTRY_HASH_OFFSET = 16;
-        private const ulong ENTRY_NEXT_OFFSET = 20;
-        private const ulong ENTRY_STRIDE = 24;
-        
-        //List<T> internal offsets
-        private const ulong LIST_ITEMS_OFFSET = 0;
-        private const ulong LIST_SIZE_OFFSET = 8;
-        
-        //Array interal offset
-        private const ulong ARRAY_LENGTH_OFFSEt = 8;
-        private const ulong ARRAY_ELEMENTS_OFFSET = 16;
-        
-        //ServerPresetChannel offsets
-        private const ulong SERVER_PRESET_CHANNEL_NAME_OFFSET = 0;
-        private const ulong SERVER_PRESET_CHANNEL_FREQ_OFFSET = 8;
-        
-
-        
-        
-        //use this for vomiting out only a single instance of a debug log
-        //very helpful when looking for where transmit is stored
-        private bool hasDumped = false;
-        
-
-        private IntPtr procHandle = IntPtr.Zero;
-        private ulong clientStateInstanceAddress;
-        private ulong serverSyncedSettingsAddress;
-        private readonly ManualLogSource log;
-
-        [DllImport("kernel32.dll")]
-        private static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
-
-        [DllImport("kernel32.dll")]
-        private static extern bool ReadProcessMemory(IntPtr proc, IntPtr addr, byte[] buffer, int size, out int read);
-
-        [DllImport("kernel32.dll")]
-        private static extern bool CloseHandle(IntPtr hObject);
-        
-        private const uint PROCESS_VM_READ = 0x0010;
-
-        public static void init(ManualLogSource logger)
+        try
         {
-            if (instance == null) instance = new SRSRadioReader(logger);
-            logger.LogInfo("[NO SRS] initalising memory reading");
-        }
-
-        public void shutdown()
-        {
-            log.LogInfo("Shutting down");
-            if (procHandle != IntPtr.Zero)
+            log.LogInfo("Finding SRS");
+            var proc = Process.GetProcessesByName("SR-ClientRadio").FirstOrDefault();
+            if (proc == null)
             {
-                CloseHandle(procHandle);
-                procHandle = IntPtr.Zero;
-            }
-            initialised = false;
-            hasSetServerSettings = false;
-        }
-
-        private SRSRadioReader(ManualLogSource logger)
-        {
-            log = logger;
-        }
-
-        public bool findInstance()
-        {
-            try
-            {
-                log.LogInfo("Finding instance");
-                var procs = Process.GetProcessesByName("SR-ClientRadio");
-                if (procs.Length == 0)
-                {
-                    log.LogError("No processes found");
-                }
-                foreach (var p in procs)
-                {
-                    log.LogInfo($"Process: {p.ProcessName}");
-                }
-                var proc = Process.GetProcessesByName("SR-ClientRadio").FirstOrDefault();
-                if (proc == null)
-                {
-                    log.LogWarning("Failed to find SRS process, is it running?");
-                    return false;
-                }
-
-                procHandle = OpenProcess(PROCESS_VM_READ, false, proc.Id);
-                if (procHandle == IntPtr.Zero)
-                {
-                    log.LogWarning("Failed to capture process");
-                    return false;
-                }
-
-                using var tgt = DataTarget.AttachToProcess(proc.Id, false);
-                var runtime = tgt.ClrVersions[0].CreateRuntime();
-
-                var heap = runtime.Heap;
-                
-                // Loop over all objects in the heap and look for the classes we want
-                foreach (var obj in heap.EnumerateObjects())
-                {
-                    if (obj.Type?.Name == "Ciribob.DCS.SimpleRadio.Standalone.Client.Singletons.ClientStateSingleton")
-                    {
-                        clientStateInstanceAddress = obj.Address;
-                        log.LogInfo($"ClientStateSingleton found at 0x{clientStateInstanceAddress:X}");
-                        initialised = true;
-                    }
-                    if (obj.Type?.Name == "Ciribob.DCS.SimpleRadio.Standalone.Common.Network.Singletons.SyncedServerSettings")
-                    {
-                        serverSyncedSettingsAddress = obj.Address;
-                        log.LogInfo($"SyncedServerSettings found at 0x{serverSyncedSettingsAddress:X}");
-                    }
-
-                    if (serverSyncedSettingsAddress != 0 && clientStateInstanceAddress != 0)
-                        break;
-                }
-                if (serverSyncedSettingsAddress != 0 && clientStateInstanceAddress != 0)
-                {
-                    serverPresetChannels = readServerPresetRadios();
-                    return true;
-                }
-                if (serverSyncedSettingsAddress == 0)
-                {
-                    log.LogError("Failed to find the synced server settings");
-                    return true;
-                }
-                
-                log.LogWarning("Failed to find singleton type");
+                log.LogWarning("Failed to capture SR-ClientRadio");
                 return false;
             }
-            catch (Exception ex)
-            {
-                log.LogError($"find instance error: {ex.Message}");
-                return false;
-            }
-        }
-
-        public SRSRadio readState()
-        {
             
-            //Some notes (for me, primarily)
-            //Ptr = pointer, this is *not* the base address of the fields for an object, but the start of the object
-            //Base = this is the base address of the fields for the object pointed to by the representative Ptr
-            //      can be accessed with: Base = Ptr + OBJ_HEADER; see OBJ_HEADER for more info
-            
-            if (!initialised)
-            {
-                if (!hasDumped) log.LogWarning("Reader not initialised");
-                hasDumped = true;
-                return null;
-            }
+            procHandle = OpenProcess(PROCESS_VM_READ, false, proc.Id);
             if (procHandle == IntPtr.Zero)
             {
-                if (!hasDumped) log.LogWarning("Process handle not found/is zero");
-                hasDumped = true;
-                return null;
-            }
-            if (!readBool(clientStateInstanceAddress + OBJ_HEADER + SRS_IS_CONNECTED_OFFSET))
-            {
-                if (!hasDumped) log.LogWarning("SRS is not connected");
-                shutdown();
-                serverPresetChannels = null;
-                if (!hasDumped) log.LogWarning("Dumping handle, attempting to reinitialise process");
-                hasDumped = true;
-                return null;
+                log.LogWarning("Failed to open SR-ClientRadio Process");
+                return false;
             }
 
-            //checking the error field
-            if (readBool(clientStateInstanceAddress + OBJ_HEADER + SRS_IS_CONNECTED_OFFSET + 1))
+            var tgt = DataTarget.AttachToProcess(proc.Id, false);
+            var runtime = tgt.ClrVersions[0].CreateRuntime();
+            var heap = runtime.Heap;
+            bool capturedClient = false;
+            bool capturedServer = false;
+            foreach (var obj in heap.EnumerateObjects())
             {
-                if (!hasDumped) log.LogError($"SRS connection error");
-                hasDumped = true;
-            }
-
-            try
-            {
-                hasDumped = false;
-                ulong baseAddr = clientStateInstanceAddress + OBJ_HEADER; //Singleton address
-                ulong playerRadioInfoPtr = readPtr(baseAddr + DSC_PLAYER_RADIO_INFO_OFFSET);    //DSCPlayerRadioInfo 
-
-                if (playerRadioInfoPtr == 0) return null;
-                ulong playerRadioInfoBase = playerRadioInfoPtr + OBJ_HEADER;    //DSCPlayerRadioInfo fields
-
-                int selectedRadioIndex = readI16(playerRadioInfoBase + SELECTED_RADIO_OFFSET);    //Index of current radio
-
-                ulong dscRadioArrayPtr = readPtr(playerRadioInfoBase + DSC_RADIO_ARRAY_OFFSET);    //Pointer to DSCRadio array
-                if (dscRadioArrayPtr == 0)
+                switch (obj.Type?.Name)
                 {
-                    log.LogError($"Could not read radio array pointer, {baseAddr}->{playerRadioInfoPtr} + {DSC_RADIO_ARRAY_OFFSET}->{dscRadioArrayPtr}");
-                    return null;
-                }
-                
-                
-                
-                int numberOfRadios = readI32(dscRadioArrayPtr + 8);
-                if (selectedRadioIndex < 0 || selectedRadioIndex >= numberOfRadios) selectedRadioIndex = 0;
-
-                ulong selectedRadioAddress = dscRadioArrayPtr + 16 + (ulong)(selectedRadioIndex * 8);
-                ulong currentRadioPtr = readPtr(selectedRadioAddress);
-                
-                if (currentRadioPtr == 0)
-                {
-                    log.LogError($"Could not read radio element pointer");
-                    return null;
-                }
-                ulong currentRadioBase = currentRadioPtr + OBJ_HEADER;
-
-                double freq = readF64(currentRadioBase + RADIO_FREQUENCY_OFFSET);
-                int mod = readI32(currentRadioBase + RADIO_MOD_OFFSET);
-                int channel = readI32(currentRadioBase + RADIO_CHANNEL_OFFSET);
-
-                ulong sendingStatePtr = readPtr(clientStateInstanceAddress + OBJ_HEADER + RADIO_SENDING_STATE_OFFSET);
-                bool isSending = false;
-                int sendingOn = -1;
-                
-                if (sendingStatePtr != 0)
-                {
-                    ulong radioSendingStateBase = sendingStatePtr + OBJ_HEADER;
-                    isSending = readBool(radioSendingStateBase + SENDING_OFFSET);
-                    sendingOn = readI32(radioSendingStateBase + SENDING_ON_OFFSET);
-                }
-                
-                string sentBy = null;
-                bool isReceiving = false;
-                ulong reciveingArrayPtr = readPtr(clientStateInstanceAddress + OBJ_HEADER + RADIO_RECEIVING_STATE_OFFSET);
-                long lastReceived = 0;
-                
-                if (reciveingArrayPtr != 0)
-                {
-                    int receivingLength = readI32(reciveingArrayPtr + OBJ_HEADER);
-
-                    if ((selectedRadioIndex >= 0) && (selectedRadioIndex < receivingLength))
+                    case "Ciribob.DCS.SimpleRadio.Standalone.Client.Singletons.ClientStateSingleton":
                     {
-                        ulong receivingElementAddress = reciveingArrayPtr + 16 + (ulong)(selectedRadioIndex * 8);
-                        
-                        ulong reciveingElementPtr = readPtr(receivingElementAddress);
+                        log.LogInfo($"ClientStateSingleton found!");
+                        clientStateInstanceAddr = obj.Address;
+                        var type = obj.Type;
+                        connectedOffset = getOffset(type, "isConnected");
+                        radioInfoOffset = getOffset(type, "<DcsPlayerRadioInfo>k__BackingField");
+                        sendingStateOffset = getOffset(type, "<RadioSendingState>k__BackingField");
+                        receivingStateOffset = getOffset(type, "<RadioReceivingState>k__BackingField");
 
-                        if (reciveingElementPtr != 0)
+                        var radioField = type.GetFieldByName("<DcsPlayerRadioInfo>k__BackingField");
+                        if (radioField == null)
                         {
-                            ulong recivingElementBase = reciveingElementPtr + OBJ_HEADER;
-                            
-                            ulong sentByPtr = readPtr(recivingElementBase + RADIO_RECEIVING_SENT_BY_OFFSET);
-                            int readBytes = 0;
-                            sentBy = readStr(sentByPtr, out readBytes);
-                            //log.LogWarning($"[NO SRS] string size: {readI32(sentByPtr + OBJ_HEADER)}, read {readBytes} bytes; {sentBy}");
+                            log.LogWarning("Failed to find radio field");
+                            return false;
+                        }
 
-                            lastReceived = readI64(recivingElementBase + RADIO_LAST_RECEIVED_OFFSET);
+                        var radioType = radioField.Type;
+                        radioArrayOffset = getOffset(radioType, "radios");
+                        selectedRadioOffset = getOffset(radioType, "selected");
+                        log.LogInfo($"Radio Array Offset: {radioArrayOffset}; selected: {selectedRadioOffset}");
+                        capturedClient = true;
+                        break;
+                    }
+                    case "Ciribob.DCS.SimpleRadio.Standalone.Common.Network.Singletons.SyncedServerSettings":
+                    {
+                        syncedSettingAddress = obj.Address;
+                        log.LogInfo($"Synced Settings address: {serverSyncedSettingsOffset}");
+                        var type = obj.Type;
+                        serverSyncedSettingsOffset = obj.Address;
+                        presetChannelNamesOffset = getOffset(type, "<ServerPresetChannels>k__BackingField");
+                        log.LogInfo($"Preset Channel Names: {presetChannelNamesOffset}");
+                        capturedServer = true;
+                        break;
+                    }
+                    case "Ciribob.DCS.SimpleRadio.Standalone.Client.Network.DCS.Models.DCSState.DCSRadio"
+                        when radioFrequencyOffset == 0:
+                    {
+                        var type = obj.Type;
+                        log.LogInfo($"DCSRadio type: {type}");
+                        radioFrequencyOffset = getOffset(type, "freq");
+                        radioChannelOffset = getOffset(type, "channel");
+                        radioModOffset = getOffset(type, "modulation");
+                        log.LogInfo($"Frequency: {radioFrequencyOffset}; channel: {radioChannelOffset}; modulation: {radioModOffset}");
+                        break;
+                    }
+                    case "Ciribob.DCS.SimpleRadio.Standalone.Client.Network.Models.RadioSendingState"
+                        when sendingOffset == 0:
+                    {
+                        var type = obj.Type;
+                        log.LogInfo($"RadioSendingState type: {type}");
+                        sendingOffset = getOffset(type, "<IsSending>k__BackingField");
+                        sendingOnOffset = getOffset(type, "<SendingOn>k__BackingField");
+                        log.LogInfo($"Sending offset: {sendingOffset}; sending on: {sendingOnOffset}");
+                        break;
+                    }
+                    case "Ciribob.DCS.SimpleRadio.Standalone.Common.Models.RadioReceivingState"
+                        when radioLastReceivedOffset == 0:
+                    {
+                        receivingStateOffset = obj.Address;
+                        var type = obj.Type;
+                        log.LogInfo($"RadioReceivingState type: {type}; 0x{receivingStateOffset}");
+                        radioReceivingSentByOffset = getOffset(type, "<SentBy>k__BackingField");
+                        radioLastReceivedOffset = getOffset(type, "<LastReceivedAt>k__BackingField");
+                        log.LogInfo($"RadioReceivingState offsets — sentBy: {radioReceivingSentByOffset}, lastReceived: {radioLastReceivedOffset}");
+                        break;
+                    }
+                    case "Ciribob.DCS.SimpleRadio.Standalone.Common.Models.Player.ServerPresetChannel"
+                        when serverPresetFrequencysOffset == 0: //we don't use name here because name is at offset 0
+                    {
+                        var type = obj.Type;
+                        log.LogInfo($"ServerPresetChannel type: {type}");
+                        serverPresetChannelNamesOffset = getOffset(type, "<Name>k__BackingField");
+                        serverPresetFrequencysOffset   = getOffset(type, "<Frequency>k__BackingField");
+                        log.LogInfo($"ServerPresetChannel offsets — name: {serverPresetChannelNamesOffset}, freq: {serverPresetFrequencysOffset}");
+                        break;
+                    }
+                }
+            }
+
+            if (capturedClient && capturedServer)
+            {
+                initialised = true;
+                serverPresetChannels = readServerPresetChannels();
+                receivingStateTask = findReceivingStateOffsets();
+                return true;
+            }
+
+            return false;
+
+
+        }
+        catch (Exception ex)
+        {
+            log.LogError($"Find Instance Error: {ex.Message}");
+            return false;
+        }
+    }
+
+    private Dictionary<string, List<(string name, double freq)>> readServerPresetChannels()
+    {
+        var res = new Dictionary<string, List<(string name, double freq)>>();
+        if (!initialised)
+        {
+            log.LogError($"Reader not initialised to read server preset radio channels");
+            return res;
+        }
+
+        if (serverPresetChannels != null)
+        {
+            log.LogWarning($"Server Preset Channels found: {serverPresetChannels.Count}");
+            return serverPresetChannels;
+        }
+
+        try
+        {
+            ulong settingsBase = syncedSettingAddress + HEADER_OFFSET;
+            
+            ulong dictionaryPtr = readPtr(settingsBase + presetChannelNamesOffset);
+
+            if (dictionaryPtr == 0)
+            {
+                log.LogError($"Could not read synced server dictionary");
+                return res;
+            }
+            
+            ulong dictionaryBase = dictionaryPtr + HEADER_OFFSET;
+
+            int count = readI32(dictionaryBase + DICT_COUNT_OFFSET);
+            ulong entriesPtr = readPtr(dictionaryBase + DICT_ENTRIES_OFFSET);
+            if (entriesPtr == 0 || count <= 0)
+            {
+                log.LogWarning($"Could not read server preset dictionary ptr/count is {count}");
+                return res;
+            }
+            log.LogInfo($"Found {count} server preset channels");
+            log.LogInfo($"Offsets:\tMHz: {serverPresetFrequencysOffset}");
+            log.LogInfo($"\t\t\tName: {serverPresetChannelNamesOffset}");
+            
+            
+            //Struct Layout: [OBJ_HEADER][methodTable][len:4][_:4][entries...]
+            int entriesLength = readI32(entriesPtr + ARRAY_LENGTH_OFFSET);
+            for (int i = 0; i < count; i++)
+            {
+                ulong entryAddres = entriesPtr + ARRAY_ELEMENTS_OFFSET + (ulong)(i * (int)ENTRY_STRIDE);
+
+                int next = readI32(entryAddres + ENTRY_NEXT_OFFSET);
+                if (next == -2) continue;
+
+                ulong keyPtr = readPtr(entryAddres + ENTRY_KEY_OFFSET);
+
+                string key = readStr(keyPtr, out int _);
+                if (key == null) continue;
+
+                ulong listPtr = readPtr(entryAddres + ENTRY_VALUE_OFFSET);
+                if (listPtr == 0) continue;
+                ulong listBase = listPtr + HEADER_OFFSET;
+
+                ulong itemPtr = readPtr(listBase + LIST_ITEMS_OFFSET);
+                int itemLen = readI32(listBase + LIST_SIZE_OFFSET);
+
+                if (itemPtr == 0 || itemLen <= 0) continue;
+
+                var channels = new List<(string name, double freq)>();
+
+                for (int j = 0; j < itemLen; j++)
+                {
+                    ulong channelPtr = readPtr(itemPtr + ARRAY_ELEMENTS_OFFSET + (ulong)(j * 8));
+                    if (channelPtr == 0) continue;
+                    ulong channelBase = channelPtr + HEADER_OFFSET;
+
+                    ulong freqAddress = channelBase + serverPresetFrequencysOffset;
+                    double presetFrequency = readF64(freqAddress);
+                    ulong namePtr = readPtr(channelBase + serverPresetChannelNamesOffset);
+                    string name = readStr(namePtr, out _);
+                    //log.LogInfo($"channelPtr: 0x{channelPtr:X}, channelBase: 0x{channelBase:X}, freqAddr: 0x{freqAddress:X}, freq: {presetFrequency}, namePtr: 0x{namePtr}, name:  {name}");
+                    if (name != null)
+                        channels.Add((name, presetFrequency));
+                }
+
+                if (channels.Count > 0) res[key] = channels;
+            }
+        }
+        catch (Exception e)
+        {
+            log.LogError($"Read Server Preset Channels Error: {e.Message}");
+        }
+        
+        log.LogInfo($"preset channels size: {res.Count}");
+        foreach (var e in res)
+        {
+            log.LogInfo($"Radio: {e.Key}");
+            foreach (var (name, freq) in e.Value)
+                log.LogInfo($"   {name}: {freq:F3} MHz");
+        }
+        return res;
+    }
+
+    public SRSRadio readState()
+    {
+        if (procHandle == IntPtr.Zero)
+        {
+            log.LogError($"Process handle is null");
+            return null;
+        }
+
+        if (!readBool(clientStateInstanceAddr + HEADER_OFFSET + connectedOffset))
+        {
+            log.LogError($"ClientState not found");
+            return null;
+        }
+
+        try
+        {
+            ulong singletonBase = clientStateInstanceAddr + HEADER_OFFSET;
+
+            //radio info
+            ulong playerRadioPtr = readPtr(singletonBase + radioInfoOffset);
+            if (playerRadioPtr == 0) return null;
+            ulong radioInfoBase = playerRadioPtr + HEADER_OFFSET;
+
+            int selectedRadio = readI16(radioInfoBase + selectedRadioOffset);
+
+            ulong radioArrayPtr = readPtr(radioInfoBase + radioArrayOffset);
+            if (radioArrayPtr == 0)
+            {
+                log.LogError($"Radio Array Not Found");
+                return null;
+            }
+
+            int radioCount = readI32(radioArrayPtr + ARRAY_LENGTH_OFFSET);
+            if (selectedRadio < 0 || selectedRadio >= radioCount) selectedRadio = 0;
+
+            ulong selectedRadioElementAddr = radioArrayPtr + ARRAY_ELEMENTS_OFFSET + (ulong)(selectedRadio * 8);
+            ulong selectedRadioPtr = readPtr(selectedRadioElementAddr);
+
+            if (selectedRadioPtr == 0)
+            {
+                log.LogError($"Selected Radio Not Found");
+                return null;
+            }
+
+            ulong selectedRadioBase = selectedRadioPtr + HEADER_OFFSET;
+
+            double freq = readF64(selectedRadioBase + radioFrequencyOffset);
+            int mod = readI32(selectedRadioBase + radioModOffset);
+            int channel = readI32(selectedRadioBase + radioChannelOffset);
+
+            ulong sendingStatePtr = readPtr(singletonBase + sendingStateOffset);
+            bool isSending = false;
+            int sendingOn = -1;
+
+            if (sendingStatePtr != 0)
+            {
+                ulong sendingStateBase = sendingStatePtr + HEADER_OFFSET;
+                isSending = readBool(sendingStateBase + sendingOffset);
+                sendingOn = readI32(sendingStateBase + sendingOnOffset);
+            }
+
+            string sentBy = null;
+            bool isReceiving = false;
+
+            if (receivingStateOffset != 0 && radioReceivingSentByOffset != 0 && radioLastReceivedOffset != 0)
+            {
+                ulong receivingArrayPtr = readPtr(singletonBase + receivingStateOffset);
+
+                if (receivingArrayPtr != 0)
+                {
+                    int receivingCount = readI32(receivingArrayPtr + ARRAY_LENGTH_OFFSET);
+
+                    if (selectedRadio >= 0 && selectedRadio < receivingCount)
+                    {
+                        ulong receivingElemAddr =
+                            receivingArrayPtr + ARRAY_ELEMENTS_OFFSET + (ulong)(selectedRadio * 8);
+                        ulong receivingPtr = readPtr(receivingElemAddr);
+
+                        if (receivingPtr != 0)
+                        {
+                            ulong receivingBase = receivingPtr + HEADER_OFFSET;
+
+                            ulong sentByPtr = readPtr(receivingBase + radioReceivingSentByOffset);
+                            sentBy = readStr(sentByPtr, out int _);
+
+                            long lastReceived = readI64(receivingBase + radioLastReceivedOffset);
                             isReceiving = TimeSpan.FromTicks(DateTime.Now.Ticks - lastReceived).TotalMilliseconds <
-                                          RADIO_RECEIVING_TIMEOUT_MS;
+                                          RADIO_RECEIVING_TIMEOUT;
                         }
                     }
                 }
-                else
-                {
-                    log.LogError($"Could not read recieving array pointer");
-                }
-
-                if (!isReceiving)
-                {
-                    sentBy = null;
-                }
-
-                if (sentBy == null)
-                {
-                    sentBy = "No voice detected";
-                }
-
-                return new SRSRadio
-                {
-                    freq = freq,
-                    mod = mod,
-                    channel = channel,
-                    selected = selectedRadioIndex,
-                    isSending = isSending,
-                    sendingOn = sendingOn,
-                    currentSpeaker = sentBy,
-                    isReceiving = isReceiving,
-                    
-                };
-
             }
-            catch (Exception ex)
+            else if (receivingStateOffset == 0 || radioReceivingSentByOffset == 0 || radioLastReceivedOffset == 0)
             {
-                log.LogError($"readState failure: {ex.Message}");
-                initialised = false;
-                return null;
+                if (receivingStateTask == null || receivingStateTask.IsCompleted)
+                    receivingStateTask = findReceivingStateOffsets();
             }
+
+            if (!isReceiving) sentBy = null;
+
+            return new SRSRadio()
+            {
+                freq = freq,
+                mod = mod,
+                channel = channel,
+                selected = selectedRadio,
+                isSending = isSending,
+                sendingOn = sendingOn,
+                currentSpeaker = sentBy ?? "No voice detected",
+                isReceiving = isReceiving,
+            };
         }
-        
-        public void diagnoseArrayLayout(ulong radiosArrayPtr)
+        catch (Exception ex)
         {
-            log.LogInfo($"radiosArrayPtr: 0x{radiosArrayPtr:X}");
-            
-            var buf = new byte[128];
-            ReadProcessMemory(procHandle, (IntPtr)radiosArrayPtr, buf, 128, out int read);
-    
-            log.LogInfo($"Bytes read: {read}");
-            
-            for (int i = 0; i < 128; i += 8)
-            {
-                var hex = BitConverter.ToString(buf, i, 8).Replace("-", " ");
-                var asLong = BitConverter.ToUInt64(buf, i);
-                log.LogInfo($"+{i:D3}: {hex}  (0x{asLong:X})");
-            }
+            log.LogError($"Read state failed: {ex.Message}");
+            return null;
         }
+    }
 
-        public Dictionary<string, List<(string name, double freq)>> readServerPresetRadios()
+    private async Task findReceivingStateOffsets()
+    {
+        await Task.Run(() =>
         {
-            var res =  new Dictionary<string, List<(string name, double freq)>>();
-            if (!initialised || serverSyncedSettingsAddress == 0)
-            {
-                log.LogError($"Reader not initialised or server sync settings not found!");
-                return res;
-            }
-
-            if (serverPresetChannels != null)
-            {
-                log.LogInfo($"Server presets generated!");
-                return serverPresetChannels;
-            }
-
             try
             {
-                ulong settingsBase = serverSyncedSettingsAddress + OBJ_HEADER;
+                var proc = Process.GetProcessesByName("SR-RadioClient").FirstOrDefault();
+                if (proc == null) return;
 
-                ulong dictPtr = readPtr(settingsBase + SERVER_SYNCED_SETTINGS_PRESET_CHANNELS_OFFSET);
-                if (dictPtr == 0)
+                var tgt = DataTarget.AttachToProcess(proc.Id, false);
+                var runtime = tgt.ClrVersions[0].CreateRuntime();
+
+                foreach (var obj in runtime.Heap.EnumerateObjects())
                 {
-                    log.LogError($"Could not read server preset dictionary pointer");
-                    return res;
+                    if (obj.Type?.Name == "Ciribob.DCS.SimpleRadio.Standalone.Common.Models.RadioDeceivingState")
+                        continue;
+
+                    radioReceivingSentByOffset = getOffset(obj.Type, "<SentBy>k__BackingField");
+                    radioLastReceivedOffset = getOffset(obj.Type, "<LastReceived>k__BackingField");
+                    log.LogInfo(
+                        $"RadioDecieing state offsets: {radioReceivingSentByOffset}, {radioLastReceivedOffset}");
+                    return;
                 }
-                
-                ulong dictBase = dictPtr + OBJ_HEADER;
 
-                int count = readI32(dictBase + DICT_COUNT_OFFSET);
-                ulong entriesPtr = readPtr(dictBase + DICT_ENTRIES_OFFSET);
-                if (entriesPtr == 0 || count <= 0)
-                {
-                    log.LogWarning($"Could not read server preset dictionary pointer/Count is {count}");
-                    return res;
-                }
-                //Struct Layout: [OBJ_HEADER][methodTable][len:4][_:4][entries...]
-                int entriesLength = readI32(entriesPtr + ARRAY_LENGTH_OFFSEt);
-                for (int i = 0; i < count; i++)
-                {
-                    ulong entryAddres = entriesPtr + ARRAY_ELEMENTS_OFFSET + (ulong)(i * (int)ENTRY_STRIDE);
-
-                    int next = readI32(entryAddres + ENTRY_NEXT_OFFSET);
-                    if (next == -2) continue;
-
-                    ulong keyPtr = readPtr(entryAddres + ENTRY_KEY_OFFSET);
-
-                    string key = readStr(keyPtr, out int _);
-                    if (key == null) continue;
-
-                    ulong listPtr = readPtr(entryAddres + ENTRY_VALUE_OFFSET);
-                    if (listPtr == 0) continue;
-                    ulong listBase = listPtr + OBJ_HEADER;
-                    
-                    ulong itemPtr = readPtr(listBase + LIST_ITEMS_OFFSET);
-                    int itemLen = readI32(listBase + LIST_SIZE_OFFSET);
-
-                    if (itemPtr == 0 || itemLen <= 0) continue;
-                    
-                    var channels = new List<(string name, double freq)>();
-
-                    for (int j = 0; j < itemLen; j++)
-                    {
-                        ulong channelPtr = readPtr(itemPtr + ARRAY_ELEMENTS_OFFSET + (ulong)(j * 8));
-                        if (channelPtr == 0) continue;
-                        ulong channelBase = channelPtr + OBJ_HEADER;
-                        
-                        ulong freqAddress    = channelBase + SERVER_PRESET_CHANNEL_FREQ_OFFSET;
-                        double presetFrequency = readF64(freqAddress);
-                        ulong namePtr  = readPtr(channelBase + SERVER_PRESET_CHANNEL_NAME_OFFSET);
-                        string name    = readStr(namePtr, out _);
-                        //log.LogInfo($"channelPtr: 0x{channelPtr:X}, channelBase: 0x{channelBase:X}, freqAddr: 0x{freqAddress:X}, freq: {presetFrequency}, namePtr: 0x{namePtr}, name:  {name}");
-                        if (name != null)
-                            channels.Add((name, presetFrequency));
-                    }
-                    if (channels.Count > 0) res[key] = channels;
-                    hasSetServerSettings = true;
-                }
+                log.LogWarning($"Failed to find receiving state again");
             }
             catch (Exception e)
             {
-                log.LogError($"Exception Reading Preset Channels: {e.Message}");
+                log.LogError($"Error finding receiving state offsets: {e.Message}");
             }
-            log.LogInfo($"preset channels size: {res.Count}");
-            foreach (var e in res)
-            {
-                log.LogInfo($"Radio: {e.Key}");
-                foreach (var (name, freq) in e.Value)
-                    log.LogInfo($"   {name}: {freq:F3} MHz");
-            }
-            return res;
-        }
-        
-        private string readStr(ulong addr, out int readBytes)
+        });
+    }
+
+    private ulong getOffset(ClrType type, string name)
+    {
+        var field = type?.GetFieldByName(name);
+        if (field == null)
         {
-            ulong strBase = addr + OBJ_HEADER;
+            log.LogWarning($"Could not find {name} in type {type?.Name}");
+            return 0UL;
+        }
+        return (ulong)field.Offset;
+    }
+    
+    private string readStr(ulong addr, out int readBytes)
+        {
+            ulong strBase = addr + HEADER_OFFSET;
             
             int l = readI32(strBase);
             if (l is <= 0 or > 1024)
@@ -488,6 +491,8 @@ namespace NO_SRS.Data
             }
 
             var buf = new byte[l * 2];
+            //l*s beacuse C# stores strings as 2 byte char pairs
+            //this took me way to long to debug
             ReadProcessMemory(procHandle, (IntPtr)(strBase + STRING_OFFSET), buf, (l * 2), out readBytes);
             return System.Text.Encoding.Unicode.GetString(buf);
         }
@@ -540,7 +545,5 @@ namespace NO_SRS.Data
             ReadProcessMemory(procHandle, (IntPtr)addr, buf, 1, out _);
             return buf[0] == 1;
         }
-    }
-    
     
 }

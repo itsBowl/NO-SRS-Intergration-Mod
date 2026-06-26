@@ -39,8 +39,6 @@
     <FodyWeavers>FodyWeavers.xml</FodyWeavers>
   </PropertyGroup>
   
-  
-
   <ItemGroup>
     <PackageReference Include="BepInEx.Analyzers" Version="1.*" PrivateAssets="all" />
     <PackageReference Include="BepInEx.Core" Version="5.*" />
@@ -54,9 +52,7 @@
     <PackageReference Include="Fody" Version="6.8.0" PrivateAssets="all" />
     <PackageReference Include="Costura.Fody" Version="5.7.0" PrivateAssets="all" />
   </ItemGroup>
-
-
-
+  
   <PropertyGroup>
     <GameDirectory Condition="'$(GameDirectory)' == ''">G:\Dest2ny\steamapps\common\Nuclear Option</GameDirectory>
     <GameManagedPath>$(GameDirectory)\NuclearOption_Data\Managed</GameManagedPath>
@@ -105,10 +101,9 @@
       <Private>False</Private>
     </Reference>
   </ItemGroup>
-
-
   
   <ItemGroup Condition="'$(TargetFramework.TrimEnd(`0123456789`))' == 'net'">
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.2" PrivateAssets="all" />
   </ItemGroup>
+  
 </Project>

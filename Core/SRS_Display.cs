@@ -1,34 +1,27 @@
 ﻿using System;
-using BepInEx;
-using NO_SRS.Data;
 using NuclearOption;
-using NuclearOption.MissionEditorScripts;
 using UnityEngine;
 using UnityEngine.UI;
 
 
-namespace NO_SRS.UI;
+namespace NO_SRS.Core;
 
 public class SRS_Display : MonoBehaviour
 {
-    public RectTransform rectTransform;
+    public RectTransform rectTransform = null;
     CanvasRenderer canvasRenderer;
     private RawImage radioBase;
 
     public RectTransform rectTf;
     public RectTransform topRightPannel;
-
-
-    private Font font = UnityEngine.Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-    private Font font2 = Font.CreateDynamicFontFromOSFont("Consolas", 30);
+    
+    private Font font = Font.CreateDynamicFontFromOSFont("Consolas", 30);
    
     private Text frequencyText;
     private Text frequencyName;
     private Text currentSpeaker;
     private Text currentRadioNumber;
     private Text frequencyLabel;
-
-    private float baseSize = 300.0f;
 
     private Vector2 FREQUENCY_LABEL_OFFSET = new Vector2(-105.0f, 66.66f);
     private Vector2 RADIO_NUMBER_OFFSET = new Vector2(-30.0f, 66.66f);
@@ -41,17 +34,18 @@ public class SRS_Display : MonoBehaviour
     private int FREQUENCY_SIZE = 35;
     private int FREQ_NAME_SIZE = 25;
     private int TRANSMITTING_SIZE = 25;
-   
-
     
-
     void Awake()
     {
         if (!SRSRadioReader.instance.initialised)
         {
             SRSRadioReader.instance.findInstance();
         }
-        rectTransform = gameObject.AddComponent<RectTransform>();
+        rectTransform = GetComponent<RectTransform>();
+        if (rectTransform == null)
+        {
+            rectTransform = gameObject.AddComponent<RectTransform>();
+        }
         rectTransform.pivot = new Vector2(1, 1);
         rectTransform.SetRectSize(new Vector2(300, 200));
         rectTransform.anchorMax = new Vector2(1,1);
@@ -65,10 +59,10 @@ public class SRS_Display : MonoBehaviour
         radioBase.color = new Color(0.2f, 0.9f, 0.2f, 1.0f);
         
         frequencyLabel = addNewTextObject("Label", FREQUENCY_LABEL_SIZE, Color.white, TextAnchor.MiddleCenter);
-        frequencyText = addNewTextObject("Frequency", 35, Color.white, TextAnchor.MiddleCenter);
-        frequencyName = addNewTextObject("FrequencyName", 25, Color.white, TextAnchor.MiddleCenter);
-        currentSpeaker = addNewTextObject("CurrentSpeaker", 25, Color.white, TextAnchor.MiddleCenter);
-        currentRadioNumber = addNewTextObject("CurrentRadioNumber", 35, Color.white, TextAnchor.MiddleCenter);
+        frequencyText = addNewTextObject("Frequency", FREQUENCY_SIZE, Color.white, TextAnchor.MiddleCenter);
+        frequencyName = addNewTextObject("FrequencyName", FREQ_NAME_SIZE, Color.white, TextAnchor.MiddleCenter);
+        currentSpeaker = addNewTextObject("CurrentSpeaker", TRANSMITTING_SIZE, Color.white, TextAnchor.MiddleCenter);
+        currentRadioNumber = addNewTextObject("CurrentRadioNumber", RADIO_NUMBER_SIZE, Color.white, TextAnchor.MiddleCenter);
     }
 
     //Added this because I need more than one of these
@@ -82,53 +76,56 @@ public class SRS_Display : MonoBehaviour
         transform.offsetMin = new Vector2(5, 5);
         transform.offsetMax = new Vector2(-5, -5);
         var text = obj.AddComponent<Text>();
-        text.font = font2;
+        text.font = font;
         text.fontSize = size;
         text.color = color;
         text.alignment = anchor;
         return text;
     }
     
+    //TODO: HMD PANEL MOVES VERTICALLY -- resolved, issue was with bad variable that was causing a scrolling window
     void Update()
     {
-        if (!enabled) return;
+        if (!Plugin.enable) return;
         float w = 300.0f * Plugin.hmdScale;
         float h = 200.0f * Plugin.hmdScale;
         canvasRenderer.SetRectSize(new Vector2(w, h));
         var radio = SRSRadioReader.instance.readState();
+        
         rectTransform.anchoredPosition = new Vector3(-Plugin.hmdPos.x,
             topRightPannel.anchoredPosition.y - topRightPannel.rect.height - Plugin.hmdPos.y);
-        radioBase.color = Plugin.HMD_Color.Value;
+        radioBase.color = Plugin.hmdColour;
         
         frequencyLabel.text = "Freq";
         frequencyLabel.rectTransform.anchoredPosition = FREQUENCY_LABEL_OFFSET * Plugin.hmdScale;
         frequencyLabel.fontSize = Mathf.RoundToInt(FREQUENCY_LABEL_SIZE * Plugin.hmdScale);
-        frequencyLabel.color = Plugin.HMD_Text_Color.Value;
+        frequencyLabel.color = Plugin.hmdTextColour;
         
         frequencyText.text = radio.freqMhz;
         frequencyText.rectTransform.anchoredPosition = FREQUENCY_OFFSET * Plugin.hmdScale;
         frequencyText.fontSize = Mathf.RoundToInt(FREQUENCY_SIZE * Plugin.hmdScale);
-        frequencyText.color = Plugin.HMD_Text_Color.Value;
+        frequencyText.color = Plugin.hmdTextColour;
         
         frequencyName.text = getPresetName(radio.freq);
         frequencyName.rectTransform.anchoredPosition = NAME_OFFSET * Plugin.hmdScale;
         frequencyName.fontSize = Mathf.RoundToInt(FREQ_NAME_SIZE * Plugin.hmdScale);
-        frequencyName.color = Plugin.HMD_Text_Color.Value;
+        frequencyName.color = Plugin.hmdTextColour;
         
         string speaker = radio.currentSpeaker;
         if (radio.isSending)
         {
             speaker = "TRANSMITTING";
-            currentSpeaker.color = Plugin.HMD_Text_Color.Value;
+            currentSpeaker.color = Plugin.hmdTextColour;
         }
         else if (radio.isReceiving)
         {
-            currentSpeaker.color = Plugin.HMD_Recieving_Color.Value;
+            currentSpeaker.color = Plugin.hmdReceivingColour;
         }
         else
         {
-            currentSpeaker.color = Plugin.HMD_No_Voice_Color.Value;
+            currentSpeaker.color = Plugin.hmdNoVoiceColour;
         }
+        
         currentSpeaker.text = speaker;
         currentSpeaker.rectTransform.anchoredPosition = CURRENT_SPEAKER_OFFSET * Plugin.hmdScale;
         currentSpeaker.fontSize = Mathf.RoundToInt(TRANSMITTING_SIZE * Plugin.hmdScale);
@@ -137,7 +134,6 @@ public class SRS_Display : MonoBehaviour
         currentRadioNumber.text = radioNumberString;
         currentRadioNumber.rectTransform.anchoredPosition = RADIO_NUMBER_OFFSET * Plugin.hmdScale;
         currentRadioNumber.fontSize = Mathf.RoundToInt(RADIO_NUMBER_SIZE * Plugin.hmdScale);
-
     }
     
     private string getPresetName(double freq, double tol = 1000)

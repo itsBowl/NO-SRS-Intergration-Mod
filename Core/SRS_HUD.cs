@@ -1,28 +1,30 @@
 ﻿using HarmonyLib;
-using NO_SRS;
-using NO_SRS.UI;
+
 using UnityEngine;
 
-namespace NO_SRS.UI;
+namespace NO_SRS.Core;
+
 [HarmonyPatch(typeof(HeadMountedDisplay), "Start")]
 public class SRS_HUD
 {
-    private static GameObject target;
+    private static GameObject tgt;
     public static SRS_Display instance;
 
-    static void Prefix(HeadMountedDisplay __instance)
+    static void Postfix(HeadMountedDisplay __instance)
     {
-        if (!Plugin.HMD) return;
-
         instance = null;
 
-        target = new GameObject("SRS_HMD");
+        tgt = new GameObject("SRS_HMD");
         HeadMountedDisplay hmd = SceneSingleton<HeadMountedDisplay>.i;
-        
-        instance = target.AddComponent<SRS_Display>();
-        var Rt = hmd.gameObject.GetComponent<RectTransform>();
+
+        instance = tgt.AddComponent<SRS_Display>();
+        RectTransform Rt = null;
+        //remember to check if the rectTransform exists before we try and add another one
+        //this is a fatal error in unity land
+        Rt = hmd.gameObject.GetComponent<RectTransform>();
+        if (Rt == null) Rt = hmd.gameObject.AddComponent<RectTransform>();
         instance.rectTransform.SetParent(Rt, false);
-        target.SetActive(true);
+        tgt.SetActive(true);
         for (int i = 0; i < Rt.childCount; i++)
         {
             var c = Rt.GetChild(i);
@@ -31,5 +33,6 @@ public class SRS_HUD
                 instance.topRightPannel = c.gameObject.GetComponent<RectTransform>();
             }
         }
+
     }
 }
