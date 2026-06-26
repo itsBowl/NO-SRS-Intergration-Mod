@@ -53,7 +53,7 @@ public class SRSRadioReader
     #endregion
     
     #region CLR_OFFSETS
-    private const ulong HEADER_OFFSET = 8;
+    private const ulong CLR_HEADER = 8;
     private const ulong ARRAY_LENGTH_OFFSET = 8;
     private const ulong ARRAY_ELEMENTS_OFFSET = 16;
     private const ulong STRING_OFFSET = 4;
@@ -234,7 +234,7 @@ public class SRSRadioReader
 
         try
         {
-            ulong settingsBase = syncedSettingAddress + HEADER_OFFSET;
+            ulong settingsBase = syncedSettingAddress + CLR_HEADER;
             
             ulong dictionaryPtr = readPtr(settingsBase + presetChannelNamesOffset);
 
@@ -244,7 +244,7 @@ public class SRSRadioReader
                 return res;
             }
             
-            ulong dictionaryBase = dictionaryPtr + HEADER_OFFSET;
+            ulong dictionaryBase = dictionaryPtr + CLR_HEADER;
 
             int count = readI32(dictionaryBase + DICT_COUNT_OFFSET);
             ulong entriesPtr = readPtr(dictionaryBase + DICT_ENTRIES_OFFSET);
@@ -262,19 +262,19 @@ public class SRSRadioReader
             int entriesLength = readI32(entriesPtr + ARRAY_LENGTH_OFFSET);
             for (int i = 0; i < count; i++)
             {
-                ulong entryAddres = entriesPtr + ARRAY_ELEMENTS_OFFSET + (ulong)(i * (int)ENTRY_STRIDE);
+                ulong entryAddress = entriesPtr + ARRAY_ELEMENTS_OFFSET + (ulong)(i * (int)ENTRY_STRIDE);
 
-                int next = readI32(entryAddres + ENTRY_NEXT_OFFSET);
+                int next = readI32(entryAddress + ENTRY_NEXT_OFFSET);
                 if (next == -2) continue;
 
-                ulong keyPtr = readPtr(entryAddres + ENTRY_KEY_OFFSET);
+                ulong keyPtr = readPtr(entryAddress + ENTRY_KEY_OFFSET);
 
                 string key = readStr(keyPtr, out int _);
                 if (key == null) continue;
 
-                ulong listPtr = readPtr(entryAddres + ENTRY_VALUE_OFFSET);
+                ulong listPtr = readPtr(entryAddress + ENTRY_VALUE_OFFSET);
                 if (listPtr == 0) continue;
-                ulong listBase = listPtr + HEADER_OFFSET;
+                ulong listBase = listPtr + CLR_HEADER;
 
                 ulong itemPtr = readPtr(listBase + LIST_ITEMS_OFFSET);
                 int itemLen = readI32(listBase + LIST_SIZE_OFFSET);
@@ -287,7 +287,7 @@ public class SRSRadioReader
                 {
                     ulong channelPtr = readPtr(itemPtr + ARRAY_ELEMENTS_OFFSET + (ulong)(j * 8));
                     if (channelPtr == 0) continue;
-                    ulong channelBase = channelPtr + HEADER_OFFSET;
+                    ulong channelBase = channelPtr + CLR_HEADER;
 
                     ulong freqAddress = channelBase + serverPresetFrequencysOffset;
                     double presetFrequency = readF64(freqAddress);
@@ -324,7 +324,7 @@ public class SRSRadioReader
             return null;
         }
 
-        if (!readBool(clientStateInstanceAddr + HEADER_OFFSET + connectedOffset))
+        if (!readBool(clientStateInstanceAddr + CLR_HEADER + connectedOffset))
         {
             log.LogError($"ClientState not found");
             return null;
@@ -332,12 +332,12 @@ public class SRSRadioReader
 
         try
         {
-            ulong singletonBase = clientStateInstanceAddr + HEADER_OFFSET;
+            ulong singletonBase = clientStateInstanceAddr + CLR_HEADER;
 
             //radio info
             ulong playerRadioPtr = readPtr(singletonBase + radioInfoOffset);
             if (playerRadioPtr == 0) return null;
-            ulong radioInfoBase = playerRadioPtr + HEADER_OFFSET;
+            ulong radioInfoBase = playerRadioPtr + CLR_HEADER;
 
             int selectedRadio = readI16(radioInfoBase + selectedRadioOffset);
 
@@ -360,7 +360,7 @@ public class SRSRadioReader
                 return null;
             }
 
-            ulong selectedRadioBase = selectedRadioPtr + HEADER_OFFSET;
+            ulong selectedRadioBase = selectedRadioPtr + CLR_HEADER;
 
             double freq = readF64(selectedRadioBase + radioFrequencyOffset);
             int mod = readI32(selectedRadioBase + radioModOffset);
@@ -372,7 +372,7 @@ public class SRSRadioReader
 
             if (sendingStatePtr != 0)
             {
-                ulong sendingStateBase = sendingStatePtr + HEADER_OFFSET;
+                ulong sendingStateBase = sendingStatePtr + CLR_HEADER;
                 isSending = readBool(sendingStateBase + sendingOffset);
                 sendingOn = readI32(sendingStateBase + sendingOnOffset);
             }
@@ -396,7 +396,7 @@ public class SRSRadioReader
 
                         if (receivingPtr != 0)
                         {
-                            ulong receivingBase = receivingPtr + HEADER_OFFSET;
+                            ulong receivingBase = receivingPtr + CLR_HEADER;
 
                             ulong sentByPtr = readPtr(receivingBase + radioReceivingSentByOffset);
                             sentBy = readStr(sentByPtr, out int _);
@@ -481,7 +481,7 @@ public class SRSRadioReader
     
     private string readStr(ulong addr, out int readBytes)
         {
-            ulong strBase = addr + HEADER_OFFSET;
+            ulong strBase = addr + CLR_HEADER;
             
             int l = readI32(strBase);
             if (l is <= 0 or > 1024)
