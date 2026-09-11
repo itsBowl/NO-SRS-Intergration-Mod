@@ -41,7 +41,7 @@ public class SRSRadioReader
     private ulong radioChannelOffset;
     private ulong radioModOffset;
     private ulong radioReceivingSentByOffset;
-    private ulong radioLastReceivedOffset;
+    private ulong radioLastReceivedOffset = 8;
     //transmission offsets
     private ulong sendingOffset;
     private ulong sendingOnOffset;
@@ -380,7 +380,7 @@ public class SRSRadioReader
             string sentBy = null;
             bool isReceiving = false;
 
-            if (receivingStateOffset != 0 && radioReceivingSentByOffset != 0 && radioLastReceivedOffset != 0)
+            if (receivingStateOffset != 0  && radioLastReceivedOffset != 0)
             {
                 ulong receivingArrayPtr = readPtr(singletonBase + receivingStateOffset);
 
