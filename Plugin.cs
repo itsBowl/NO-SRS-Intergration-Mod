@@ -8,7 +8,8 @@ using UnityEngine;
 
 namespace NO_SRS;
 
-[BepInPlugin(MyPluginInfo.PLUGIN_GUID, MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
+//REMMEBER TO INCREMENT MOD VERSION
+[BepInPlugin("NO_SRS", "Nuclear Option SRS Intergration", "1.2.1")]
 public class Plugin : BaseUnityPlugin
 {
     internal new static ManualLogSource Logger;
